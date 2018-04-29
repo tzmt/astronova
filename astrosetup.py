@@ -18,28 +18,43 @@ import pendulum
 # depencies for pendulum
 from datetime import datetime, timedelta
 
+# for leap year checks
+# this should eventually be done with pendulum
+import calendar
+
 # https://pypi.python.org/pypi/geopy
 from geopy.geocoders import Nominatim
 
-
-# type and constant definitions for interaction with the DLL, and HTML frontend
 SIDEREALMODE = c_int32(64*1024)
 PLANETLIST = ["Sun", "Moon", "Mercury", "Venus", "Mars", 
               "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]
-CAMPANUS = c_int(67)
-VERSION_NUMBER = "0.02a"
 
-# class to hold all natal chart data
+ANGLES = ["Asc", "MC", "Dsc", "IC", "Eq Asc", "Eq Dsc", "EP (Ecliptical)", 
+              "Zen", "WP (Ecliptical)", "Ndr"]
+
+# Chart points that are subject to transits
+RADIXCHARTPOINTS = ["r. Sun", "r. Moon", "r. Mercury", "r. Venus", "r. Mars",                                                                             
+              "r. Jupiter", "r. Saturn", "r. Uranus", "r. Neptune", "r. Pluto", 
+              "r. Asc", "r. MC", "r. Dsc", "r. IC", "r. Eq Asc", "r. Eq Dsc", "r. EP (Ecliptical)", 
+              "r. Zen", "r. WP (Ecliptical)", "r. Ndr"]
+
+CAMPANUS = c_int(67)
+VERSION_NUMBER = "0.1a"
+
+file_dir = os.path.dirname(os.path.abspath(__file__))
+dll = windll.LoadLibrary(file_dir + '/SE/sweph/bin/swedll64.dll')
+
 class Natal:
     def __init__(self, name):
         self.name = name
-        self.datetimelocation = {
-            "Year" : 0,
-            "Month" : 0,
-            "Day" : 0,
-            "Hour" : 0,
-            "Min" : 0,
-            "Sec" : 0,
+        
+        self.datetime = None
+        self.timezone = None
+        self.obliquity = None
+        self.lst = None
+        self.svp = None
+
+        self.location = {
             "Longitude" : (),
             "Latitude" : ()
             }
@@ -56,10 +71,7 @@ class Natal:
             "Saturn" : (c_double * 6)(),
             "Uranus" : (c_double * 6)(),
             "Neptune" : (c_double * 6)(),
-            "Pluto" : (c_double * 6)(),
-            "Obliquity" : (c_double * 6)(),
-            "SVP" : (),
-            "LST" : (),
+            "Pluto" : (c_double * 6)()
         }
         self.mundane_positions = {
             # House placement, decimal longitude (out of 360*)
@@ -93,16 +105,130 @@ class Natal:
             "MC" : (c_double)(),
             "Dsc" : (c_double)(),
             "IC" : (c_double)(),
-            "EP" : (c_double)(),
+            "Eq Asc" : (c_double)(),
+            "Eq Dsc" : (c_double)(),
+            "EP (Ecliptical)" : (c_double)(),
             "Zen" : (c_double)(),
-            "WP" : (c_double)(),
+            "WP (Ecliptical)" : (c_double)(),
             "Ndr" : (c_double)(),
             }
 
+        # To be one of Natal, SSR, SLR, DSLR
+        self.type = "Natal"
 
-# Swiss Ephemeris DLL functions, wrapped for use by Python
-file_dir = os.path.dirname(os.path.abspath(__file__))
-dll = windll.LoadLibrary(file_dir + '/SE/sweph/bin/swedll64.dll')
+class DualChart:
+    def __init__(self, name):
+        self.name = name
+        
+        self.datetime_natal = None
+        self.datetime_return = None
+        self.timezone = None
+        self.obliquity = None
+        self.lst = None
+        self.svp = None
+
+        self.location = {
+            "Longitude" : None,
+            "Latitude" : None
+        }
+
+        self.natal_planets = {
+            "r. Sun" : (c_double * 6)(),
+            "r. Moon" : (c_double * 6)(),
+            "r. Mercury" : (c_double * 6)(),
+            "r. Venus" : (c_double * 6)(),
+            "r. Mars" : (c_double * 6)(),
+            "r. Jupiter" : (c_double * 6)(),
+            "r. Saturn" : (c_double * 6)(),
+            "r. Uranus" : (c_double * 6)(),
+            "r. Neptune" : (c_double * 6)(),
+            "r. Pluto" : (c_double * 6)(),
+        }
+
+        self.natal_angles = {
+            "r. Asc" : (c_double)(),
+            "r. MC" : (c_double)(),
+            "r. Dsc" : (c_double)(),
+            "r. IC" : (c_double)(),
+            "r. Eq Asc" : (c_double)(),
+            "r. Eq Dsc" : (c_double)(),
+            "r. EP (Ecliptical)" : (c_double)(),
+            "r. Zen" : (c_double)(),
+            "r. WP (Ecliptical)" : (c_double)(),
+            "r. Ndr" : (c_double)()
+        }
+
+        self.transiting_planets = {
+            "t. Sun" : (c_double * 6)(),
+            "t. Moon" : (c_double * 6)(),
+            "t. Mercury" : (c_double * 6)(),
+            "t. Venus" : (c_double * 6)(),
+            "t. Mars" : (c_double * 6)(),
+            "t. Jupiter" : (c_double * 6)(),
+            "t. Saturn" : (c_double * 6)(),
+            "t. Uranus" : (c_double * 6)(),
+            "t. Neptune" : (c_double * 6)(),
+            "t. Pluto" : (c_double * 6)()
+        }
+
+        self.natal_pvl = {
+            # House placement, decimal longitude (out of 360*)
+            "r. Sun" : [c_double(), c_double()],
+            "r. Moon" : [c_double(), c_double()],
+            "r. Mercury" : [c_double(), c_double()],
+            "r. Venus" : [c_double(), c_double()],
+            "r. Mars" : [c_double(), c_double()],
+            "r. Jupiter" : [c_double(), c_double()],
+            "r. Saturn" : [c_double(), c_double()],
+            "r. Uranus" : [c_double(), c_double()],
+            "r. Neptune" : [c_double(), c_double()],
+            "r. Pluto" : [c_double(), c_double()],
+            }
+
+        self.transiting_pvl = {
+            "t. Sun" : [c_double(), c_double()],
+            "t. Moon" : [c_double(), c_double()],
+            "t. Mercury" : [c_double(), c_double()],
+            "t. Venus" : [c_double(), c_double()],
+            "t. Mars" : [c_double(), c_double()],
+            "t. Jupiter" : [c_double(), c_double()],
+            "t. Saturn" : [c_double(), c_double()],
+            "t. Uranus" : [c_double(), c_double()],
+            "t. Neptune" : [c_double(), c_double()],
+            "t. Pluto" : [c_double(), c_double()],
+            }
+
+        self.cusps = {
+            "1" : (c_double)(),
+            "2" : (c_double)(),
+            "3" : (c_double)(),
+            "4" : (c_double)(),
+            "5" : (c_double)(),
+            "6" : (c_double)(),
+            "7" : (c_double)(),
+            "8" : (c_double)(),
+            "9" : (c_double)(),
+            "10" : (c_double)(),
+            "11" : (c_double)(),
+            "12" : (c_double)(),
+            }
+
+        self.transiting_angles = {
+            "Asc" : (c_double)(),
+            "MC" : (c_double)(),
+            "Dsc" : (c_double)(),
+            "IC" : (c_double)(),
+            "Eq Asc" : (c_double)(),
+            "Eq Dsc" : (c_double)(),
+            "EP (Ecliptical)" : (c_double)(),
+            "Zen" : (c_double)(),
+            "WP (Ecliptical)" : (c_double)(),
+            "Ndr" : (c_double)(),
+            }
+
+        self.type = "Return & Natal"
+
+#### DLL-level functions, wrapped for use by Python
 
 # sets the filepath of the ephemeris for the DLL functions
 py_set_ephemeris_path = dll.swe_set_ephe_path
@@ -129,6 +255,12 @@ py_local_time_to_UTC.restype = None
 py_get_julian_day = dll.swe_julday
 py_get_julian_day.argtypes = [c_int, c_int, c_int, c_double, c_int]
 py_get_julian_day.restype = c_double
+
+# Calculates year, month, day, fractional hour from Julian Day
+# Arg order: Julian day, calendar flag (1), year, month, day, fractional hour
+py_reverse_julian_day = dll.swe_revjul
+py_reverse_julian_day.argtypes = [c_double, c_int, c_int, c_int, c_int, c_double]
+py_reverse_julian_day.restype = None
 
 # Accepts the Julian Day Number in Universal Time, 
 # and returns sidereal time at the Greenwich Meridian.
@@ -164,8 +296,10 @@ py_calculate_houses.argtypes = [c_double, c_int32, c_double, c_double,
 py_calculate_houses.restype = None
 
 
-# Python-level functions
+#### Python-level functions
 
+
+# The get_ functions are helper functions to acquire values within a larger function call
 def get_sign(longitude):
 
     zodiac = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir", 
@@ -173,7 +307,369 @@ def get_sign(longitude):
     key = int(longitude/30)
     return zodiac[key]
 
-def parse_aspect(pname1, plong1, pname2, plong2):
+def get_orb(longitude_one, longitude_two, lowbound, highbound):
+    """Gets the orb, or distance from exact, of an aspect"""
+
+    aspect = math.fabs(longitude_one - longitude_two)
+    aspect360 = math.fabs(aspect - 360)
+    aspect_average = (lowbound + highbound) / 2
+
+    if aspect >= lowbound and aspect <= highbound:
+        if lowbound != 0:
+            return math.fabs(aspect - aspect_average)
+        else:
+            return aspect
+    elif aspect360 >= lowbound and aspect360 <= highbound:
+        if lowbound != 0:
+            return math.fabs(aspect360 - aspect_average)
+        else:
+            return aspect360
+
+def get_priority(pname1, pname2, _tier, atype, relative_orb):
+    """Function to calculate weight for aspects"""
+        
+    priority = 0
+    lights = ["Sun", "Moon"]
+    outer_planets = ["Uranus", "Neptune", "Pluto"]
+    hard_aspects = ["Cnj", "Opp", "Sqr", "Sms", "Ssq"]
+    primary_angles = ["Asc", "MC", "Dsc", "IC"]
+    secondary_angles = ["Eq Asc", "Eq Dsc", "EP (Ecliptical)", "Zen", "WP (Ecliptical)", "Ndr"]
+        
+    if pname1 in lights:
+        priority += 1
+    if pname2 in lights:
+        priority += 1
+
+    priority += (3 - _tier)
+
+    if atype in hard_aspects:
+        priority += 0.10
+    if pname1 in outer_planets and pname2 in outer_planets:
+        priority -= 0.5
+
+    if pname2 in primary_angles:
+        priority += 1
+    elif pname2 in secondary_angles:
+        priority += 0.5
+
+    priority = priority - relative_orb
+
+    return priority
+
+def get_solar_return_julian_day(natal_classname, return_classname):
+
+    natal_pos = natal_classname.planet_dictionary["Sun"][0]
+
+    startdate = return_classname.datetime.subtract(hours=12)
+    enddate = return_classname.datetime.add(hours=12)
+
+    # startdate and enddate are Pendulum class instances
+    period = pendulum.period(startdate, enddate)
+
+    searchlist = [x for x in range(startdate.diff(enddate).in_seconds())]
+
+    returnarray = (c_double * 6)()
+    found = False
+    while found == False:
+        midpoint = len(searchlist) // 2
+        errorstring = create_string_buffer(126)
+
+        if len(searchlist) > 0:
+            test_date = startdate.add(seconds=searchlist[midpoint])
+
+            # Conversion from local time to UTC
+            # This can probably just be done with pendulum
+            (outyear, outmonth, outday, 
+                outhour, outmin, outsec) = (c_int32(), c_int32(), c_int32(), 
+                                            c_int32(), c_int32(), c_double())
+            py_local_time_to_UTC(test_date.year, test_date.month, test_date.day, 
+                                    test_date.hour, test_date.minute, test_date.second, 
+                                    test_date.offset_hours, outyear, outmonth, outday, outhour, 
+                                    outmin, outsec)
+
+            decimalhour_UTC = (((((outhour.value * 60)      
+                                    + outmin.value) * 60)      
+                                    + outsec.value) / 3600)    
+
+            # Using the new UTC time to get a correct Julian Day Number
+            time_julian_day = py_get_julian_day(outyear, outmonth, outday, 
+                                                decimalhour_UTC, 1)
+
+            py_calculate_planets_UT(time_julian_day, 0, SIDEREALMODE, returnarray, errorstring)
+
+        if len(searchlist) < 2:
+            found = True
+            return_classname.datetime = test_date
+            print("found SSR Date! {} {} {} {} {} {}".format(test_date.year, test_date.month, test_date.day, test_date.hour, test_date.minute, test_date.second))
+            return time_julian_day
+
+        elif returnarray[0] > natal_pos:
+            if math.fabs(returnarray[0] - natal_pos) <= 180:
+                try:
+                    searchlist = searchlist[:(midpoint - 1)]
+                    print(len(searchlist))
+                except:
+                    return None
+            else:
+                try:
+                    searchlist = searchlist[(midpoint + 1):]
+                    print(len(searchlist))
+                except:
+                    return None
+
+        elif returnarray[0] < natal_pos:
+            if math.fabs(returnarray[0] - natal_pos) <= 180:
+                try:
+                    searchlist = searchlist[(midpoint + 1):]
+                    print(len(searchlist))
+                except:
+                    return None
+            else:
+                try:
+                    searchlist = searchlist[:(midpoint - 1)]
+                    print(len(searchlist))
+                except:
+                    return None
+    return None
+
+def old_get_lunar_return_julian_day(natal_classname, return_classname, startdate, enddate, type_lunar_return):
+
+    if type_lunar_return == "Lunar Return":
+        natal_pos = natal_classname.planet_dictionary["Moon"][0]
+    elif type_lunar_return == "Demi-Lunar Return":
+        natal_pos = (natal_classname.planet_dictionary["Moon"][0] + 180) % 360
+
+    print("Radical Moon: {}".format(natal_pos))
+
+    if startdate.diff(enddate).in_days() >= 1:
+        found = False
+        searchlist = [x for x in range(startdate.diff(enddate).in_hours())]
+        returnarray = (c_double * 6)()
+
+        while found == False:
+            midpoint = len(searchlist) // 2
+            errorstring = create_string_buffer(126)
+
+            if len(searchlist) > 0:
+                test_date = startdate.add(hours=searchlist[midpoint])
+
+                # Conversion from local time to UTC
+                # This can probably just be done with pendulum
+                (outyear, outmonth, outday, 
+                    outhour, outmin, outsec) = (c_int32(), c_int32(), c_int32(), 
+                                                c_int32(), c_int32(), c_double())
+                py_local_time_to_UTC(test_date.year, test_date.month, test_date.day, 
+                                        test_date.hour, test_date.minute, test_date.second, 
+                                        test_date.offset_hours, outyear, outmonth, outday, outhour, 
+                                        outmin, outsec)
+
+                decimalhour_UTC = (((((outhour.value * 60)      
+                                        + outmin.value) * 60)      
+                                        + outsec.value) / 3600)    
+
+                # Using the new UTC time to get a correct Julian Day Number
+                time_julian_day = py_get_julian_day(outyear, outmonth, outday, 
+                                                    decimalhour_UTC, 1)
+
+                py_calculate_planets_UT(time_julian_day, 1, SIDEREALMODE, returnarray, errorstring)
+
+            if len(searchlist) < 2:
+                # The moon moves about 13.2 degrees per hour
+                if returnarray[0] > natal_pos or (returnarray[0] <= 14 and natal_pos >= 346):
+                    test_date = test_date.subtract(hours=1)
+                    return_classname.datetime = test_date
+                    found = True
+                    break
+                else:
+                    return_classname.datetime = test_date
+                    found = True
+                    break
+
+            elif returnarray[0] > natal_pos or (returnarray[0] <= 14 and natal_pos >= 346):
+                try:
+                    searchlist = searchlist[:(midpoint - 1)]
+                except:
+                    return None
+
+            else:
+                try:
+                    searchlist = searchlist[(midpoint + 1):]
+                except:
+                    return None
+
+    # 3,600 seconds per hour
+    searchlist = [x for x in range(3610)]
+    
+    found = False
+    while found == False:
+        midpoint = len(searchlist) // 2
+        returnarray = (c_double * 6)()
+        errorstring = create_string_buffer(126)
+
+        if len(searchlist) > 0:
+            test_date = return_classname.datetime.add(seconds=searchlist[midpoint])
+
+            # Conversion from local time to UTC
+            # This can probably just be done with pendulum
+            (outyear, outmonth, outday, 
+                outhour, outmin, outsec) = (c_int32(), c_int32(), c_int32(), 
+                                            c_int32(), c_int32(), c_double())
+            py_local_time_to_UTC(test_date.year, test_date.month, test_date.day, 
+                                    test_date.hour, test_date.minute, test_date.second, 
+                                    test_date.offset_hours, outyear, outmonth, outday, outhour, 
+                                    outmin, outsec)
+
+            decimalhour_UTC = (((((outhour.value * 60)      
+                                    + outmin.value) * 60)      
+                                    + outsec.value) / 3600)    
+
+            # Using the new UTC time to get a correct Julian Day Number
+            time_julian_day = py_get_julian_day(outyear, outmonth, outday, 
+                                                decimalhour_UTC, 1)
+
+            py_calculate_planets_UT(time_julian_day, 1, SIDEREALMODE, returnarray, errorstring)
+
+        # base case: the most accurate time identifiable down to about a second of real time
+        if len(searchlist) < 2:
+            #if math.fabs(returnarray[0] - natal_pos) <= 1 or math.fabs((returnarray[0] - natal_pos) - 360) <= 1:
+                found = True
+                return_classname.datetime = test_date
+                print("Julian day search complete!")
+                return time_julian_day
+            #else: 
+            #    raise IndexError("Unable to identify accurate date!")
+
+        elif returnarray[0] > natal_pos or (returnarray[0] <= 14 and natal_pos >= 346):
+            try:
+                searchlist = searchlist[:(midpoint - 1)]
+            except:
+                return None
+
+        else:
+            try:
+                searchlist = searchlist[(midpoint + 1):]
+            except:
+                return None
+
+    return None
+
+def get_lunar_return_julian_day(natal_classname, return_classname, startdate, enddate, type_lunar_return):
+
+    if type_lunar_return == "SLR":
+        natal_pos = natal_classname.planet_dictionary["Moon"][0]
+    elif type_lunar_return == "DSLR":
+        natal_pos = (natal_classname.planet_dictionary["Moon"][0] + 180) % 360
+
+    print("Radical Moon: {}".format(natal_pos))
+
+    searchlist = [x for x in range(startdate.diff(enddate).in_seconds())]
+    print("Size of search list... {}".format(len(searchlist)))
+    returnarray = (c_double * 6)()
+    test_date = startdate
+    found = False
+    while found == False:
+        midpoint = len(searchlist) // 2
+        
+        errorstring = create_string_buffer(126)
+
+        if len(searchlist) > 0:
+            test_date = startdate.add(seconds=searchlist[midpoint])
+
+            # Conversion from local time to UTC
+            # This can probably just be done with pendulum
+            (outyear, outmonth, outday, 
+                outhour, outmin, outsec) = (c_int32(), c_int32(), c_int32(), 
+                                            c_int32(), c_int32(), c_double())
+            py_local_time_to_UTC(test_date.year, test_date.month, test_date.day, 
+                                    test_date.hour, test_date.minute, test_date.second, 
+                                    test_date.offset_hours, outyear, outmonth, outday, outhour, 
+                                    outmin, outsec)
+
+            decimalhour_UTC = (((((outhour.value * 60)      
+                                    + outmin.value) * 60)      
+                                    + outsec.value) / 3600)    
+
+            # Using the new UTC time to get a correct Julian Day Number
+            time_julian_day = py_get_julian_day(outyear, outmonth, outday, 
+                                                decimalhour_UTC, 1)
+
+            py_calculate_planets_UT(time_julian_day, 1, SIDEREALMODE, returnarray, errorstring)
+
+        # base case: the most accurate time identifiable down to about a second of real time
+        if len(searchlist) < 2:
+            print("Settled on: {}".format(returnarray[0]))
+            if math.fabs(natal_pos - returnarray[0]) <= 4 or math.fabs(natal_pos - returnarray[0] - 360) <= 4:
+                found = True
+                return_classname.datetime = test_date
+                print("Julian day search complete!")
+                return time_julian_day
+            else:
+                return(get_lunar_return_julian_day(natal_classname, return_classname, 
+                        startdate.add(days=14), enddate.add(days=14), type_lunar_return))
+
+        elif returnarray[0] > natal_pos: 
+            if math.fabs(returnarray[0] - natal_pos) <= 180:
+                try:
+                    searchlist = searchlist[:(midpoint - 1)]
+                    print(len(searchlist))
+                    print("Testing... {}".format(returnarray[0]))
+                except:
+                    return None
+            else:
+                try:
+                    searchlist = searchlist[(midpoint + 1):]
+                    print(len(searchlist))
+                    print("Testing... {}".format(returnarray[0]))
+                except:
+                    return None
+
+        elif returnarray[0] < natal_pos: 
+            if math.fabs(returnarray[0] - natal_pos) <= 180:
+                try:
+                    searchlist = searchlist[(midpoint + 1):]
+                    print(len(searchlist))
+                    print("Testing... {}".format(returnarray[0]))
+                except:
+                    return None
+            else:
+                try:
+                    searchlist = searchlist[:(midpoint - 1)]
+                    print(len(searchlist))
+                    print("Testing... {}".format(returnarray[0]))
+                except:
+                    return None
+
+    return None
+
+def get_LST(year, month, day, decimalhour, timezone, decimal_longitude):
+    """Calculates local sidereal time for date, time, location of event"""
+
+    # Julian Day number for midnight
+    julian_day_0_GMT = py_get_julian_day(year, month, day, 0, 1)
+
+    # Local time converted to UT/GMT
+    universal_time = (decimalhour - timezone)
+
+    # Sidereal time for the Julian day number, at midnight
+    sidereal_time_0_GMT = (julian_day_0_GMT - 2451545.0) / 36525.0
+
+    # "LST" for the Greenwich Meridian, not local yet
+    greenwich_sidereal_time = (6.697374558 
+                               + (2400.051336 * sidereal_time_0_GMT) 
+                               + (0.000024862 
+                               * (math.pow(sidereal_time_0_GMT, 2))) 
+                               + (universal_time * 1.0027379093))
+
+
+    local_sidereal_time = ((greenwich_sidereal_time 
+                            + (decimal_longitude / 15)) % 24)
+
+    if local_sidereal_time < 0:
+        local_sidereal_time += 24
+
+    return local_sidereal_time
+
+def parse_aspect(pname1, plong1, pname2, plong2, aspect_category):
     """Checks two planets' positions for any valid aspects, 
     returning that aspect info as a string if applicable"""
 
@@ -183,46 +679,6 @@ def parse_aspect(pname1, plong1, pname2, plong2):
     orb = 0
     tier = None
     aspect_type = ""
-
-    def get_orb(longitude_one, longitude_two, lowbound, highbound):
-        """Gets the orb, or distance from exact, of an aspect"""
-
-        aspect = math.fabs(longitude_one - longitude_two)
-        aspect360 = math.fabs(aspect - 360)
-        aspect_average = (lowbound + highbound) / 2
-
-        if aspect >= lowbound and aspect <= highbound:
-            if lowbound != 0:
-                return math.fabs(aspect - aspect_average)
-            else:
-                return aspect
-        elif aspect360 >= lowbound and aspect360 <= highbound:
-            if lowbound != 0:
-                return math.fabs(aspect360 - aspect_average)
-            else:
-                return aspect360
-
-    def get_priority(pname1, pname2, _tier, atype, relative_orb):
-        """Function to calculate weight for aspects; to be utilized in a later release"""
-        
-        priority = 0
-        lights = ["Sun", "Moon"]
-        outer_planets = ["Uranus", "Neptune", "Pluto"]
-        hard_aspects = ["Cnj", "Opp", "Sqr", "Sms", "Ssq"]
-        
-        if pname1 in lights:
-            priority += 1
-        if pname2 in lights:
-            priority += 1
-
-        priority += (3 - _tier)
-
-        if atype in hard_aspects:
-            priority += 0.10
-        if pname1 in outer_planets and pname2 in outer_planets:
-            priority -= 0.5
-        priority = priority - relative_orb
-        return priority
 
     # Case: conjunction
     if get_orb(plong1, plong2, 0, 10) != None:
@@ -314,7 +770,7 @@ def parse_aspect(pname1, plong1, pname2, plong2):
             tier = 1
         else: 
             tier = None
-        priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb/4))
+        priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb/3.5))
     else:
         pass
 
@@ -328,59 +784,111 @@ def parse_aspect(pname1, plong1, pname2, plong2):
             tier = 1
         else: 
             tier = None
-        priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb/4))
+        priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb/3.5))
     else:
         pass
 
     # Case: quincunx
-    if get_orb(plong1, plong2, 71, 73) != None: 
-        aspect_type = "Qnx"
-        orb = (get_orb(plong1, plong2, 71, 73) % 72)
-        if orb <= 1:
-            tier = 1
-        else: 
-            tier = None
-        priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb/2))
-    else:
-        pass
+    #if get_orb(plong1, plong2, 149, 151) != None: 
+    #    aspect_type = "Qnx"
+    #    orb = (get_orb(plong1, plong2, 149, 151) % 150)
+    #    if orb <= 1:
+    #        tier = 1
+    #    else: 
+    #        tier = None
+    #    priority_placeholder = get_priority(pname1, pname2, tier, aspect_type, (orb))
+    #else:
+    #    pass
 
     if orb != 0 and tier is not None:
         returnvalue = []
         orb_deg = math.trunc(orb)
         orb_min = math.trunc((orb - (math.trunc(orb))) * 60)
-        returnvalue += pname1 + " " + aspect_type + " " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+        if aspect_category == "Natal":
+            returnvalue += pname1 + " " + aspect_type + " " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+
+        elif aspect_category == "SSR to Natal":
+            if orb_deg < 6 and aspect_type in ["Cnj", "Opp", "Sqr", "Sms", "Ssq"] and pname1 != "Sun" and pname2 not in ANGLES:
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+            elif ((orb_deg * 60) + orb_min <= 70) and aspect_type == "Cnj" and pname1 != "Sun" and pname2 in ANGLES:
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+            else:
+                priority_placeholder = 0
+                return None
+            if pname1 == "Moon":
+               priority_placeholder += 0.5
+
+        elif aspect_category == "SLR to Natal":
+            if orb_deg < 6 and aspect_type in ["Cnj", "Opp", "Sqr", "Sms", "Ssq"] and pname1 != "Moon" and pname2 not in ANGLES:
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+            elif ((orb_deg * 60) + orb_min <= 70) and aspect_type == "Cnj" and pname1 != "Moon" and pname2 in ANGLES:
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+            else:
+                priority_placeholder = 0
+                return None
+            if pname1 == "Sun":
+               priority_placeholder += 0.5
+
+        elif aspect_category == "Transit to Transit":
+            if orb_deg < 6:
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "t. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if (pname1 or pname2) == ("Sun" or "Moon"):
+                    priority_placeholder += 0.5
+            else:
+                return None
+
+        elif aspect_category == "Transit to Natal":
+            if (orb_deg < 1 and (pname1 != "Moon" and (pname2 not in ANGLES and (aspect_type in ["Cnj", "Opp", "Sqr", "Sms", "Ssq"])))):
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if pname1 in ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                    priority_placeholder += 0.5
+                elif pname1 in ["Mercury", "Venus"]:
+                    priority_placeholder -= 0.5
+            elif (orb_deg < 1 and (pname1 != "Moon" and (pname2 in ANGLES and (aspect_type == "Cnj")))):
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "r. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if pname1 in ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                    priority_placeholder += 0.5
+                elif pname1 in ["Mercury", "Venus"]:
+                    priority_placeholder -= 0.5
+            else:
+                return None
+
+        elif aspect_category == "Transit to Local":
+            if (orb_deg < 1 and (pname1 != "Moon" and (pname2 in ANGLES and (aspect_type == "Cnj")))):
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "l. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if pname1 in ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                    priority_placeholder += 0.5
+                elif pname1 in ["Mercury", "Venus"]:
+                    priority_placeholder -= 0.5
+            else:
+                return None
+
+        elif aspect_category == "Transit to SSR":
+            if (orb_deg < 1 and (pname1 != "Moon" and (pname2 not in ANGLES and (aspect_type in ["Cnj", "Opp", "Sqr", "Sms", "Ssq"])))):
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "s. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if pname1 in ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                    priority_placeholder += 0.5
+                elif pname1 in ["Mercury", "Venus"]:
+                    priority_placeholder -= 0.5
+            elif (orb_deg < 1 and (pname1 != "Moon" and (pname2 in ANGLES and (aspect_type == "Cnj")))):
+                returnvalue += "t. " + pname1 + " " + aspect_type + " " + "s. " + pname2 + " " + str(orb_deg) + "* " + str(orb_min) + "'"
+                if pname1 in ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                    priority_placeholder += 0.5
+                elif pname1 in ["Mercury", "Venus"]:
+                    priority_placeholder -= 0.5
+            else:
+                return None
+
+        elif aspect_cateogry == "Transit to SP":
+            pass
+
         aspect_return = "".join(returnvalue)
         return (priority_placeholder, aspect_return)
     else:
        return None                       
 
-def get_LST(year, month, day, decimalhour, timezone, decimal_longitude):
-    """Calculates local sidereal time for date, time, location of event"""
 
-    # Julian Day number for midnight
-    julian_day_0_GMT = py_get_julian_day(year, month, day, 0, 1)
-
-    # Local time converted to UT/GMT
-    universal_time = (decimalhour - timezone)
-
-    # Sidereal time for the Julian day number, at midnight
-    sidereal_time_0_GMT = (julian_day_0_GMT - 2451545.0) / 36525.0
-
-    # "LST" for the Greenwich Meridian, not local yet
-    greenwich_sidereal_time = (6.697374558 
-                               + (2400.051336 * sidereal_time_0_GMT) 
-                               + (0.000024862 
-                               * (math.pow(sidereal_time_0_GMT, 2))) 
-                               + (universal_time * 1.0027379093))
-
-
-    local_sidereal_time = ((greenwich_sidereal_time 
-                            + (decimal_longitude / 15)) % 24)
-
-    if local_sidereal_time < 0:
-        local_sidereal_time += 24
-
-    return local_sidereal_time
+# The calculate_ functions flesh out chart data for a specific given chart instance
 
 def calculate_mundane_positions(planet_latitude, planet_longitude, 
                                  LST, obliquity, decimal_svp, 
@@ -458,9 +966,11 @@ def calculate_houses(julian_day_number, geolatitude, geolongitude,
     classname.angles["MC"] = house_array[1]
     classname.angles["Dsc"] = (house_array[0] + 180) % 360
     classname.angles["IC"] = (house_array[1] + 180) % 360
-    classname.angles["EP"] = (classname.angles["MC"] + 90) % 360
+    classname.angles["Eq Asc"] = house_array[4]
+    classname.angles["Eq Dsc"] = (house_array[4] + 180) % 360
+    classname.angles["EP (Ecliptical)"] = (classname.angles["MC"] + 90) % 360
     classname.angles["Zen"] = (classname.angles["Dsc"] + 90) % 360
-    classname.angles["WP"] = (classname.angles["IC"] + 90) % 360
+    classname.angles["WP (Ecliptical)"] = (classname.angles["IC"] + 90) % 360
     classname.angles["Ndr"] = (classname.angles["Asc"] + 90) % 360    
 
     return None
@@ -468,6 +978,7 @@ def calculate_houses(julian_day_number, geolatitude, geolongitude,
 def calculate_foreground_planets(classname):
     """Calculates foreground and background planets, and returns them as a tuple"""
 
+    # These lists will actually be printed to the document
     foregroundlist = []
     backgroundlist = []
     
@@ -478,7 +989,7 @@ def calculate_foreground_planets(classname):
         "Dsc" : (6, 7), 
         "IC" : (3, 4)
         }
-    secondary_angles = ["EP", "Zen", "WP", "Ndr"]
+    secondary_angles = ["Eq Asc", "Eq Dsc", "EP (Ecliptical)", "Zen", "WP (Ecliptical)", "Ndr"]
     background_angles = [(2, 3), (5, 6), (8, 9), (11, 12)]
 
     # Planet proximity to primary angles, measured in prime vertical longitude
@@ -498,7 +1009,8 @@ def calculate_foreground_planets(classname):
                 orb_min = math.trunc((orb - (math.trunc(orb))) * 60)
                 returnvalue += planet + " Cnj " + angle + " " + str(orb_deg) + "* " + str(orb_min) + "'"
                 foreground_planet = "".join(returnvalue)
-                foregroundlist.append(foreground_planet)    
+                priority = get_priority(planet, angle, 0, "Cnj", orb/6)
+                foregroundlist.append((priority, foreground_planet))
 
     # Planet proximity to background cusps, measured in prime vertical longitude
     for angle in background_angles:
@@ -515,7 +1027,8 @@ def calculate_foreground_planets(classname):
                 orb_min = math.trunc((orb - (math.trunc(orb))) * 60)
                 returnvalue += planet + " background " + str(orb_deg) + "* " + str(orb_min) + "'"
                 background_planet = "".join(returnvalue)
-                backgroundlist.append(background_planet)
+                priority = get_priority(planet, angle, 0, "Cnj", orb/2)
+                backgroundlist.append((priority, background_planet))
 
     # Planet proximity to secondary angles, measured in ecliptical longitude
     for angle in secondary_angles:
@@ -537,37 +1050,40 @@ def calculate_foreground_planets(classname):
                 orb_min = math.trunc((orb - (math.trunc(orb))) * 60)
                 returnvalue += key + " Cnj " + angle + " " + str(orb_deg) + "* " + str(orb_min) + "'"
                 foreground_planet = "".join(returnvalue)
-                foregroundlist.append(foreground_planet)
+                priority = get_priority(planet, angle, 0, "Cnj", orb/3)
+                foregroundlist.append((priority, foreground_planet))
  
+    foregroundlist.sort(reverse=True)
+    backgroundlist.sort(reverse=True)
     return (foregroundlist, backgroundlist)
 
-def calculate_natal_data(year, month, day, hour, 
-                         minute, second, utc_offset, decimal_longitude, 
-                         decimal_latitude, classname):
+def calculate_natal_data(classname):
     """ Populates class instance with birth info, planetary coordinates """
 
-    classname.datetimelocation["Year"] = year
-    classname.datetimelocation["Month"] = month
-    classname.datetimelocation["Day"] = day
-    classname.datetimelocation["Hour"] = hour
-    classname.datetimelocation["Min"] = minute
-    classname.datetimelocation["Sec"] = second
-    classname.datetimelocation["Longitude"] = decimal_longitude
-    classname.datetimelocation["Latitude"] = decimal_latitude
+    year = classname.datetime.year
+    month = classname.datetime.month
+    day = classname.datetime.day
+    hour = classname.datetime.hour 
+    minute = classname.datetime.minute
+    second = classname.datetime.second
+
+    decimal_longitude = classname.location["Longitude"] 
+    decimal_latitude = classname.location["Latitude"]
 
     decimalhour_local = (((((hour * 60)      
                          + minute) * 60)      
                          + second) / 3600)
     
     LST = get_LST(year, month, day, decimalhour_local, 
-                  utc_offset, decimal_longitude)
+                  classname.datetime.offset_hours, decimal_longitude)
 
     # Conversion from local time to UTC
+    # This can probably just be done with pendulum
     (outyear, outmonth, outday, 
      outhour, outmin, outsec) = (c_int32(), c_int32(), c_int32(), 
                                  c_int32(), c_int32(), c_double())
     py_local_time_to_UTC(year, month, day, hour, minute, second, 
-                         utc_offset, outyear, outmonth, outday, outhour, 
+                         classname.datetime.offset_hours, outyear, outmonth, outday, outhour, 
                          outmin, outsec)
 
     decimalhour_UTC = (((((outhour.value * 60)      
@@ -592,6 +1108,7 @@ def calculate_natal_data(year, month, day, hour,
 
     planet_number = 0
     returnarray = [(c_double * 6)() for x in range(10)]
+    obliquity_array = (c_double * 6)()
     for key in classname.planet_dictionary.keys():
 
         # dll.swe_calc_ut uses ints as identifiers; 0-9 is Sun-Pluto
@@ -605,24 +1122,24 @@ def calculate_natal_data(year, month, day, hour,
 
         else:
 
-            # -1 is the special "planetary body" for calculating obliquity
-            py_calculate_planets_UT(time_julian_day, -1, SIDEREALMODE, 
-                                    classname.planet_dictionary["Obliquity"], 
-                                    errorstring)
             break
+
+                    # -1 is the special "planetary body" for calculating obliquity
+    py_calculate_planets_UT(time_julian_day, -1, SIDEREALMODE, 
+                                    obliquity_array, 
+                                    errorstring)
 
     for key in classname.mundane_positions.keys():
         calculate_mundane_positions(classname.planet_dictionary[key][1], 
                                      classname.planet_dictionary[key][0], 
-                                     LST, 
-                                     classname.planet_dictionary["Obliquity"][0], 
+                                     LST, obliquity_array[0], 
                                      SVP, decimal_latitude, 
                                      classname.mundane_positions[key])
-    
-    classname.planet_dictionary["SVP"] = SVP
-    classname.planet_dictionary["LST"] = LST
-    classname.planet_dictionary["Longitude"] = decimal_longitude
-    classname.planet_dictionary["Latitude"] = decimal_latitude
+    classname.obliquity = obliquity_array[0]
+    classname.svp = SVP
+    classname.lst = LST
+    # classname.planet_dictionary["Longitude"] = decimal_longitude
+    # classname.planet_dictionary["Latitude"] = decimal_latitude
 
     calculate_houses(time_julian_day, decimal_latitude, decimal_longitude, classname)
 
@@ -639,7 +1156,7 @@ def calculate_and_sort_aspects(classname):
         for planetcounter in range (loopcount, 10):
             planetname = str(PLANETLIST[planetcounter])
             potential_aspect = (parse_aspect(str(key), classname.planet_dictionary[key][0], planetname,
-                        classname.planet_dictionary[planetname][0]))
+                        classname.planet_dictionary[planetname][0], "Natal"))
             if potential_aspect is not None:
                 aspect_list.append(potential_aspect)
             planetcounter += 1
@@ -647,19 +1164,113 @@ def calculate_and_sort_aspects(classname):
     aspect_list.sort(reverse=True) 
     return aspect_list
 
-def print_natal_data(classname):
-    """Prints all relevant natal information to a .txt file"""
+def calculate_and_sort_aspects_dual_chart(natal_classname, return_classname, type_of_transit):
 
+    aspect_list = []
+    aspect_priority = 0
+
+    ### I can't think straight anymore... outer loop needs to be SSR planets, inner loop natal planets.
+
+    for ssr_planet in PLANETLIST:
+        for natal_planet in PLANETLIST:
+            potential_aspect = (parse_aspect(ssr_planet, 
+                                 return_classname.planet_dictionary[ssr_planet][0], 
+                                 natal_planet, natal_classname.planet_dictionary[natal_planet][0], type_of_transit))
+            if potential_aspect is not None:
+                aspect_list.append(potential_aspect)
+            
+        for natal_angle in ANGLES:
+            potential_aspect = (parse_aspect(ssr_planet, 
+                                 return_classname.planet_dictionary[ssr_planet][0], 
+                                 natal_angle, natal_classname.angles[natal_angle], type_of_transit))
+            if potential_aspect is not None:
+                aspect_list.append(potential_aspect)        
+
+    aspect_list.sort(reverse=True) 
+    return aspect_list
+
+
+    pass
+
+def calculate_and_sort_transits_and_progs(natal_classname, transit_classname, type_of_transit):
+
+    aspect_list = []
+    aspect_priority = 0
+
+    ### I can't think straight anymore... outer loop needs to be SSR planets, inner loop natal planets.
+
+    for transiting_planet in PLANETLIST:
+        for natal_planet in PLANETLIST:
+            potential_aspect = (parse_aspect(transiting_planet, 
+                                 transit_classname.planet_dictionary[transiting_planet][0], 
+                                 natal_planet, natal_classname.planet_dictionary[natal_planet][0], type_of_transit))
+            if potential_aspect is not None:
+                aspect_list.append(potential_aspect)
+            
+        for natal_angle in ANGLES:
+            potential_aspect = (parse_aspect(transiting_planet, 
+                                 transit_classname.planet_dictionary[transiting_planet][0], 
+                                 natal_angle, natal_classname.angles[natal_angle], type_of_transit))
+            if potential_aspect is not None:
+                aspect_list.append(potential_aspect)        
+
+    aspect_list.sort(reverse=True) 
+    return aspect_list
+
+
+    pass
+
+def calculate_ssr_chart(natal_classname, return_classname):
+  
+    """ Populates return class instance with return chart info """
+
+    ssr_julian_day = get_solar_return_julian_day(natal_classname, return_classname)
+    calculate_natal_data(return_classname)
+    print("SSR calculation complete")
+
+    return None
+
+def calculate_slr_chart(natal_classname, return_classname, startdate, enddate, type_lunar_return):
+  
+    """ Populates return class instance with return chart info """
+
+    ssr_julian_day = get_lunar_return_julian_day(natal_classname, return_classname, startdate, enddate, type_lunar_return)
+    calculate_natal_data(return_classname)
+    print("SLR calculation complete")
+
+    return None
+
+def intialize_dual_charts(natal_classname, return_classname, dual_classname):
+
+    dual_classname.location = return_classname.location
+    dual_classname.obliquity = return_classname.obliquity
+    dual_classname.lst = return_classname.lst
+    dual_classname.svp = return_classname.svp
+    dual_classname.datetime = return_classname.datetime
+    dual_classname.natal_angles = natal_classname.angles
+    dual_classname.transiting_angles = return_classname.angles
+    dual_classname.cusps = return_classname.cusps
+
+    dual_classname.natal_pvl = natal_classname.mundane_positions
+    dual_classname.transiting_pvl = return_classname.mundane_positions
+
+    dual_classname.natal_planets = natal_classname.planet_dictionary
+    dual_classname.transiting_planets = return_classname.planet_dictionary
+
+    pass
+
+def print_chart_data(classname, chart_type):
+    """Prints all relevant natal information to a .txt file"""
+    # Note: chart_type does not have any impact on functionality yet
+
+    datetime = classname.datetime
     natalfile = open("{}.txt".format(classname.name), "w+")
     natalfile.write("~* AstroNova v. {} *~\n".format(VERSION_NUMBER))
+    natalfile.write("Time of report: {}\n".format((pendulum.now()).to_day_datetime_string()))
     natalfile.write("Natal instance: {}\n".format(classname.name))
-    natalfile.write("{} {} {} {}:{}\n".format(classname.datetimelocation["Year"], 
-                                            classname.datetimelocation["Month"], 
-                                            classname.datetimelocation["Day"], 
-                                            classname.datetimelocation["Hour"], 
-                                            classname.datetimelocation["Min"]))
-    natalfile.write("Long: {}   Lat: {}\n\n\n".format(classname.datetimelocation["Longitude"], 
-                                                classname.datetimelocation["Latitude"]))
+    natalfile.write("Birth data: {}\n".format(datetime.to_day_datetime_string()))
+    natalfile.write("Long: {}   Lat: {}\n\n\n".format(classname.location["Longitude"], 
+                                                classname.location["Latitude"]))
     natalfile.write("Sign Placements: \n\n")
     for key in PLANETLIST:
         natalfile.write("{}: {}*{}' {}".format(key, 
@@ -695,14 +1306,14 @@ def print_natal_data(classname):
 
     natalfile.write("\nForeground Planets: \n\n")
     for placement in angularity_list[0]:
-        natalfile.write(placement)
+        natalfile.write(placement[1])
         natalfile.write("\n")
 
     natalfile.write("\n")
 
     natalfile.write("\nBackground Planets: \n\n")
     for placement in angularity_list[1]:
-        natalfile.write(placement)
+        natalfile.write(placement[1])
         natalfile.write("\n")
     natalfile.write("\n")
 
@@ -710,4 +1321,153 @@ def print_natal_data(classname):
     sorted_aspect_list = calculate_and_sort_aspects(classname)
     for priority, aspect in sorted_aspect_list:
         natalfile.write("{} -- priority: {}\n".format(aspect, priority))
+
     natalfile.close()
+
+def print_full_solunar_return(natal_classname, return_classname, type_solunar_return):
+
+    print_chart_data(return_classname, "{}".format(type_solunar_return))
+    print("{} initial file written".format(type_solunar_return))
+    
+    # Should redo this using a "with" block
+    datetime = return_classname.datetime
+    natalfile = open("{}.txt".format(natal_classname.name + " Full {} ".format(type_solunar_return) + str(datetime.year)), "w+")
+    natalfile.write("~* AstroNova v. {} *~\n".format(VERSION_NUMBER))
+    natalfile.write("Time of report: {}\n".format((pendulum.now()).to_day_datetime_string()))
+    natalfile.write("Return instance: {}\n".format(natal_classname.name + str(type_solunar_return) + str(datetime.year)))
+    natalfile.write("{} Date: {}\n".format(type_solunar_return, datetime.to_day_datetime_string()))
+    natalfile.write("Long: {}   Lat: {} \n\n\n".format(return_classname.location["Longitude"], 
+                                                return_classname.location["Latitude"]))
+
+    natalfile.write("\nPrimary Angles (Eclipto): \n\n")
+    for key in return_classname.angles.keys():
+        if key in ["Asc", "Dsc", "MC", "IC"]:
+            natalfile.write("{} {}* {}' {}".format(key, 
+                                            ((math.floor(return_classname.angles[key])) % 30), 
+                                            round((return_classname.angles[key] 
+                                            - math.floor(return_classname.angles[key])) * 60), 
+                                            get_sign(return_classname.angles[key])))
+            natalfile.write("\n")
+    natalfile.write("\n")
+
+    # Eventually: rewrite the angularity calculator to NOT sort data;
+    # implement a prioritizing function, return a tuple that gets sorted by the function asking for it
+    angularity_list = calculate_foreground_planets(return_classname)
+
+    # Allows for precession of natal chart into the framework of the return chart 
+    natal_classname.location = return_classname.location
+    natal_classname.obliquity = return_classname.obliquity
+    natal_classname.lst = return_classname.lst
+    natal_classname.svp = return_classname.svp
+    natal_classname.datetime = return_classname.datetime
+    original_angles = natal_classname.angles
+    natal_classname.angles = return_classname.angles
+
+    for key in natal_classname.mundane_positions.keys():
+        calculate_mundane_positions(natal_classname.planet_dictionary[key][1], 
+                                        natal_classname.planet_dictionary[key][0], 
+                                        natal_classname.lst, 
+                                        natal_classname.obliquity, 
+                                        natal_classname.svp, natal_classname.location["Latitude"], 
+                                        natal_classname.mundane_positions[key])
+
+    angularity_list_natal = calculate_foreground_planets(natal_classname)
+
+    natalfile.write("\nForeground Planets: \n\n")
+    for placement in angularity_list[0]:
+        natalfile.write("t. " + placement[1])
+        natalfile.write("\n")
+
+    for placement in angularity_list_natal[0]:
+        natalfile.write("r. " + placement[1])
+        natalfile.write("\n")
+
+    natalfile.write("\n")
+
+    natalfile.write("\nBackground Planets: \n\n")
+    for placement in angularity_list[1]:
+        natalfile.write("t. " + placement[1])
+        natalfile.write("\n")
+    natalfile.write("\n")
+
+    for placement in angularity_list_natal[1]:
+        natalfile.write("r. " + placement[1])
+        natalfile.write("\n")
+    natalfile.write("\n")
+
+    natal_classname.angles = original_angles
+
+    natalfile.write("\nList of Aspects: \n\n")
+    sorted_aspect_list = calculate_and_sort_aspects_dual_chart(natal_classname, return_classname, 
+                                        "SSR to Natal" if type_solunar_return == "SSR" else "SLR to Natal")
+    for priority, aspect in sorted_aspect_list:
+        natalfile.write("{} -- priority: {}\n".format(aspect, priority))
+
+    natalfile.close()
+    print("Full {} File Written".format(type_solunar_return))
+
+def print_active_transits(natal_classname, local_classname, solar_classname, transit_instance):
+    
+    calculate_natal_data(natal_classname)
+    calculate_natal_data(local_classname)
+    calculate_natal_data(solar_classname)
+    calculate_natal_data(transit_instance)
+    transits_to_natal = calculate_and_sort_transits_and_progs(natal_classname, transit_instance, "Transit to Natal")
+    transits_to_ssr = calculate_and_sort_transits_and_progs(solar_classname, transit_instance, "Transit to SSR")
+
+
+    # Copied and pasted from print_full_solunar_return with no alteration
+    
+    # Should redo this using a "with" block
+    natalfile = open("{}.txt".format(natal_classname.name + " Transit Report"), "w+")
+    natalfile.write("~* AstroNova v. {} *~\n".format(VERSION_NUMBER))
+    natalfile.write("Time of report: {}\n".format((pendulum.now()).to_day_datetime_string()))
+    natalfile.write("Transit Analysis Date: {}\n".format(transit_instance.datetime.to_day_datetime_string()))
+    natalfile.write("Long: {}   Lat: {} \n\n\n".format(solar_classname.location["Longitude"], 
+                                                solar_classname.location["Latitude"]))
+
+    natalfile.write("\n")
+
+    natalfile.write("\nList of Aspects: \n\n")
+    sorted_aspect_list = calculate_and_sort_aspects_dual_chart(natal_classname, transit_instance, 
+                                        "Transit to Natal")
+
+    if local_classname != None:
+        sorted_aspect_list_local = calculate_and_sort_aspects_dual_chart(local_classname, transit_instance, 
+                                    "Transit to Local")
+
+    sorted_aspect_list_ssr = calculate_and_sort_aspects_dual_chart(solar_classname, transit_instance, 
+                                        "Transit to SSR")
+
+    for entry in sorted_aspect_list_ssr:
+        sorted_aspect_list.append(entry)
+    if local_classname != None:
+        for entry in sorted_aspect_list_local:
+            sorted_aspect_list.append(entry)
+
+    sorted_aspect_list.sort(reverse=True)
+
+    for priority, aspect in sorted_aspect_list:
+        natalfile.write("{} -- priority: {}\n".format(aspect, priority))
+
+    natalfile.close()
+    print("Full Transit Report Written")
+
+
+
+###
+# To-do list:
+# Measure contacts to EP/WP in RA
+# Implement secondary and tertiary progressions
+# Implement secondary progressions to natal, and to secondary progressions
+# Implement transits to progs
+# Adjust parse_aspect to differentiate between transits to natal, solar, and s.p. planets
+### Probably make a separate function, with many more recognized aspects, just to handle progs
+# Implement visual charts
+
+
+
+
+    
+
+

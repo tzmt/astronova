@@ -5,7 +5,7 @@ timezonefinder = TimezoneFinder()
 def main():
 
     def interface_submission(*args):
-        """Called upon submitting birth data via interface"""
+        """Primary function called submitting birth data via interface"""
 
         native_name = None
         location = None
@@ -33,6 +33,7 @@ def main():
         try:
             location = str(location_value.get())
             location = location.strip()
+            location = location.lower()
             if native_name == "test":
                 location = "ridgewood, nj, usa"
             elif location == "":
@@ -45,6 +46,7 @@ def main():
         try:
             birthdate = str(birthdate_value.get())
             birthdate = birthdate.strip()
+
             if native_name == "test":
                 birthdate = "12/20/1989"
             elif birthdate == "":
@@ -81,6 +83,10 @@ def main():
         if year < 0 or year > 2100:
             messagebox.showinfo(message="Year out of range; choose year >= 0 and <= 2100")
             return None
+        elif year < 30:
+            year += 2000
+        elif year < 100 and year >= 30:
+            year += 1900
         if month < 1 or month > 12:
             messagebox.showinfo(message="Invalid month")
             return None
@@ -91,8 +97,21 @@ def main():
         try:
             ampm = (birthtime.strip("0123456789: ")).lower()
             birthtime = birthtime.strip("AMPamp ")
-            hour, min = birthtime.split(":")
+            if ":" not in birthtime:
+                if len(birthtime) == 2:
+                    hour = birthtime
+                    min = 0
+                elif len(birthtime) == 3:
+                    hour = birthtime[0]
+                    min = birthtime[1:3]
+                elif len(birthtime) == 4:
+                    hour = int(birthtime[0:2])
+                    min = birthtime[2:4]
+            else: 
+                hour, min = birthtime.split(":")
+
             hour, min = int(hour), int(min)
+
         except:
             raise RuntimeError("Error splitting birthtime")
         if hour < 0 or hour > 23:
@@ -101,11 +120,14 @@ def main():
         if min < 0 or min > 59:
             messagebox.showinfo(message="Invalid minute")
             return None
-        if str(ampm) == "pm" and hour < 12:
-            hour = int(hour) + 12
-        elif str(ampm) == "am" and hour == 12:
+
+        if "a" in str(ampm) and "p" in str(ampm):
+            messagebox.showinfo(message="Invalid am/pm information")
+        elif "p" in str(ampm) and hour < 12:
+            hour += 12
+        elif "a" in str(ampm) and hour == 12:
             hour = 0
-        elif str(ampm) == "am" and hour > 12:
+        elif "a" in str(ampm) and hour > 12:
             messagebox.showinfo(message="Invalid birth time")
             return None
 
@@ -187,6 +209,10 @@ def main():
             if startyear < 0 or startyear > 2100:
                 messagebox.showinfo(message="Year out of range; choose year >= 0 and <= 2100")
                 return None
+            elif startyear < 30:
+                startyear += 2000
+            elif startyear < 100 and startyear >= 30:
+                startyear += 1900
             if startmonth < 1 or startmonth > 12:
                 messagebox.showinfo(message="Invalid month")
                 return None
@@ -194,13 +220,11 @@ def main():
                 messagebox.showinfo(message="Invalid day")
                 return None
 
-        
-
         native_instance = Natal(native_name)
         try:
             natal_location = geolocator.geocode(location)
         except:
-            messagebox.showinfo(message="lookup failure: Have you tried asking nicely?")
+            messagebox.showinfo(message="Natal location lookup failure: Have you tried asking nicely?")
             return None
         if natal_location is None:
             messagebox.showinfo(message="Unable to locate region; try different name, format, or city")
@@ -223,7 +247,7 @@ def main():
             except:
                 messagebox.showinfo(message="Lookup failure for current residence; have you tried turning it off and on again?")
                 return None
-            if natal_location is None:
+            if local_residence is None:
                 messagebox.showinfo(message="Unable to locate lat/long for current residence; try different name, format, or city")
                 return None
             local_latitude = local_residence.latitude
@@ -233,15 +257,21 @@ def main():
                 return None
             local_timezone = timezonefinder.timezone_at(lng=local_longitude, lat=local_latitude)
             print("Relocation successful! Using {} timezone".format(local_timezone))
+            print(local_residence)
             local_tz_pendulum = pendulum.timezone(local_timezone)
-            native_instance.datetime = local_tz_pendulum.convert(native_instance.datetime)
+            relocated_datetime = local_tz_pendulum.convert(native_instance.datetime)
+            native_instance.datetime = relocated_datetime
             print("Adjusted birth time: {}".format(native_instance.datetime.to_day_datetime_string()))
             local_instance = native_instance
             local_instance.location["Longitude"] = local_longitude 
             local_instance.location["Latitude"] = local_latitude
+            print(local_residence.longitude)
+            print(local_residence.latitude)
+            print(local_longitude)
+            print(local_latitude)
 
-        native_instance.location["Longitude"] = natal_longitude 
-        native_instance.location["Latitude"] = natal_latitude
+        native_instance.location["Longitude"] = local_longitude if relocation != None else natal_longitude 
+        native_instance.location["Latitude"] = local_latitude if relocation != None else natal_latitude
 
         # Sub-minute accuracy is not required for calculation of natal data
         calculate_natal_data(native_instance if local_instance == None else local_instance)
@@ -263,7 +293,7 @@ def main():
             enddate = startdate.add(days=14)
             slr_instance = Natal("{} {}".format(native_instance.name, radiovalue))
             slr_instance.location["Longitude"] = native_instance.location["Longitude"] if relocation == None else local_longitude
-            slr_instance.location["Latitude"] = native_instance.location["Latitude"] if relocation == None else local_longitude
+            slr_instance.location["Latitude"] = native_instance.location["Latitude"] if relocation == None else local_latitude
             slr_instance.datetime = native_instance.datetime
             calculate_slr_chart(native_instance if local_instance == None else local_instance, slr_instance, startdate, enddate, radiovalue)
             print_full_solunar_return(native_instance if local_instance == None else local_instance, slr_instance, radiovalue)
@@ -279,11 +309,17 @@ def main():
 
             transit_date = pendulum.create(startyear, startmonth, startday, 0, 0, 0, 0, native_instance.datetime.timezone)
             transit_instance = Natal("{} Transits".format(native_instance.name))
-            transit_instance.location["Longitude"] = local_instance.location["Longitude"]
-            transit_instance.location["Latitude"] = local_instance.location["Latitude"]
+            transit_instance.location["Longitude"] = local_instance.location["Longitude"] if relocation != None else native_instance.location["Longitude"]
+            transit_instance.location["Latitude"] = local_instance.location["Latitude"] if relocation != None else native_instance.location["Latitude"]
             transit_instance.datetime = transit_date
 
-            print_active_transits(native_instance, local_instance, ssr_instance, transit_instance)
+            # None of this makes any sense at all
+            #prog_jul_day = get_sp_julian_day(native_instance, transit_date)
+            #prog_instance = Natal("Prog")
+            #calculate_natal_data(prog_instance)
+
+            print_active_transits(native_instance, local_instance, ssr_instance, transit_instance, transit_date)
+
 
         return None
 
@@ -359,7 +395,7 @@ def main():
 
     name_entry.focus()
     root.mainloop()
-    
+
     # Free memory allocated by the DLL for raw calculations
     dll.swe_close()
 
